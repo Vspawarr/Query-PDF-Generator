@@ -3,18 +3,7 @@ import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
-from pypdf import PdfReader, PdfWriter
-from pypdf.generic import (
-    NameObject,
-    DictionaryObject,
-    ArrayObject,
-    FloatObject,
-    NumberObject,
-    TextStringObject,
-    DecodedStreamObject,
-    RectangleObject,
-    BooleanObject,
-)
+import pymupdf
 
 
 # ============================================================
@@ -23,7 +12,8 @@ from pypdf.generic import (
 
 def parse_page_ranges(page_text, total_pages):
     """
-    Converts:
+    Converts page input such as:
+
         2
         2,3
         2,4,6
@@ -45,7 +35,10 @@ def parse_page_ranges(page_text, total_pages):
         if not part:
             continue
 
+        # ----------------------------------------------------
         # Page range
+        # ----------------------------------------------------
+
         if "-" in part:
 
             range_parts = part.split("-")
@@ -55,36 +48,62 @@ def parse_page_ranges(page_text, total_pages):
                     f"Invalid page range: {part}"
                 )
 
-            start = int(range_parts[0].strip())
-            end = int(range_parts[1].strip())
+            start = int(
+                range_parts[0].strip()
+            )
+
+            end = int(
+                range_parts[1].strip()
+            )
 
             if start > end:
                 raise ValueError(
                     f"Invalid page range: {part}"
                 )
 
-            for page_number in range(start, end + 1):
+            for page_number in range(
+                start,
+                end + 1
+            ):
 
-                if page_number < 1 or page_number > total_pages:
+                if (
+                    page_number < 1
+                    or page_number > total_pages
+                ):
                     raise ValueError(
-                        f"Page {page_number} is outside the PDF."
+                        f"Page {page_number} "
+                        f"is outside the PDF."
                     )
 
-                pages.append(page_number - 1)
+                pages.append(
+                    page_number - 1
+                )
 
+        # ----------------------------------------------------
         # Single page
+        # ----------------------------------------------------
+
         else:
 
             page_number = int(part)
 
-            if page_number < 1 or page_number > total_pages:
+            if (
+                page_number < 1
+                or page_number > total_pages
+            ):
                 raise ValueError(
-                    f"Page {page_number} is outside the PDF."
+                    f"Page {page_number} "
+                    f"is outside the PDF."
                 )
 
-            pages.append(page_number - 1)
+            pages.append(
+                page_number - 1
+            )
 
+    # --------------------------------------------------------
     # Remove duplicates while preserving order
+    # --------------------------------------------------------
+
     unique_pages = []
 
     for page in pages:
@@ -96,36 +115,43 @@ def parse_page_ranges(page_text, total_pages):
 
 
 # ============================================================
-# EDITABLE YELLOW LABEL / PDF FORM FIELD
+# ADD EDITABLE TEXT COMMENT
 # ============================================================
 
-def add_editable_label(writer, page_number, label):
+def add_editable_text_comment(
+    page,
+    text
+):
     """
-    Adds a visible and editable PDF text field.
+    Adds a visible editable PDF FreeText annotation.
+
+    This is intended to behave like an editable
+    PDF text comment / text box.
 
     Appearance:
         Yellow background
         Black border
-        Black bold text
-
-    The field is an actual PDF form field, not a static drawing.
+        Bold black text
+        Center aligned
     """
 
-    page = writer.pages[page_number]
-
-    page_width = float(page.mediabox.width)
-    page_height = float(page.mediabox.height)
+    page_width = page.rect.width
+    page_height = page.rect.height
 
     # --------------------------------------------------------
-    # Label settings
+    # Label dimensions
     # --------------------------------------------------------
 
-    font_size = 13
+    font_size = 11
 
-    # Approximate Helvetica width
-    text_width = len(label) * 7.5
+    # Approximate width for Helvetica
+    text_width = pymupdf.get_text_length(
+        text,
+        fontname="helv",
+        fontsize=font_size
+    )
 
-    padding_x = 7
+    padding_x = 8
     padding_y = 5
 
     label_width = (
@@ -136,396 +162,215 @@ def add_editable_label(writer, page_number, label):
     label_height = (
         font_size
         + (padding_y * 2)
+        + 2
     )
 
     # --------------------------------------------------------
-    # Position - top right
+    # Top-right position
     # --------------------------------------------------------
 
     margin_right = 25
     margin_top = 25
 
-    x1 = page_width - margin_right
-    y1 = page_height - margin_top
-
-    x0 = x1 - label_width
-    y0 = y1 - label_height
-
-    # --------------------------------------------------------
-    # Appearance stream
-    # --------------------------------------------------------
-
-    appearance = DecodedStreamObject()
-
-    # Escape PDF text characters
-    safe_label = (
-        label
-        .replace("\\", "\\\\")
-        .replace("(", "\\(")
-        .replace(")", "\\)")
+    x1 = (
+        page_width
+        - margin_right
     )
 
-    appearance_content = f"""
-q
-
-1 1 0 rg
-0 0 {label_width} {label_height} re
-f
-
-0 0 0 RG
-1 w
-
-0.5 0.5 m
-{label_width - 0.5} 0.5 l
-{label_width - 0.5} {label_height - 0.5} l
-0.5 {label_height - 0.5} l
-0.5 0.5 l
-S
-
-BT
-/Helv {font_size} Tf
-0 0 0 rg
-{padding_x} {padding_y + 1} Td
-({safe_label}) Tj
-ET
-
-Q
-"""
-
-    appearance.set_data(
-        appearance_content.encode("latin-1")
+    y1 = (
+        page_height
+        - margin_top
     )
 
-    appearance[
-        NameObject("/Type")
-    ] = NameObject("/XObject")
+    x0 = (
+        x1
+        - label_width
+    )
 
-    appearance[
-        NameObject("/Subtype")
-    ] = NameObject("/Form")
+    y0 = (
+        y1
+        - label_height
+    )
 
-    appearance[
-        NameObject("/BBox")
-    ] = RectangleObject(
-        (
-            0,
-            0,
-            label_width,
-            label_height
+    rect = pymupdf.Rect(
+        x0,
+        y0,
+        x1,
+        y1
+    )
+
+    # --------------------------------------------------------
+    # Rich text
+    #
+    # <b> makes the text bold.
+    # text-align:center centers it.
+    # --------------------------------------------------------
+
+    rich_text = (
+        '<div '
+        'style="'
+        'font-family:Helvetica;'
+        'font-size:11pt;'
+        'text-align:center;'
+        'margin:0;'
+        'padding:0;'
+        '">'
+        f'<b>{text}</b>'
+        '</div>'
+    )
+
+    # --------------------------------------------------------
+    # Create FreeText annotation
+    # --------------------------------------------------------
+
+    annot = page.add_freetext_annot(
+        rect,
+        rich_text,
+        fontsize=font_size,
+        fontname="helv",
+        text_color=(0, 0, 0),
+        fill_color=(1, 1, 0),
+        border_width=1,
+        opacity=1,
+        align=pymupdf.TEXT_ALIGN_CENTER,
+        richtext=True,
+        style=(
+            "font-family:Helvetica;"
+            "font-size:11pt;"
+            "text-align:center;"
+            "margin:0;"
+            "padding:0;"
         )
     )
 
-    # Helvetica resource
-    appearance[
-        NameObject("/Resources")
-    ] = DictionaryObject({
+    # --------------------------------------------------------
+    # Make sure appearance is updated
+    # --------------------------------------------------------
 
-        NameObject("/Font"): DictionaryObject({
-
-            NameObject("/Helv"): DictionaryObject({
-
-                NameObject("/Type"):
-                    NameObject("/Font"),
-
-                NameObject("/Subtype"):
-                    NameObject("/Type1"),
-
-                NameObject("/BaseFont"):
-                    NameObject("/Helvetica")
-            })
-        })
-    })
-
-    appearance_ref = writer._add_object(
-        appearance
+    annot.update(
+        fontsize=font_size,
+        text_color=(0, 0, 0),
+        fill_color=(1, 1, 0)
     )
 
-    # --------------------------------------------------------
-    # PDF Form Widget
-    # --------------------------------------------------------
-
-    widget = DictionaryObject({
-
-        NameObject("/Type"):
-            NameObject("/Annot"),
-
-        NameObject("/Subtype"):
-            NameObject("/Widget"),
-
-        NameObject("/FT"):
-            NameObject("/Tx"),
-
-        NameObject("/T"):
-            TextStringObject(label),
-
-        NameObject("/V"):
-            TextStringObject(label),
-
-        NameObject("/DV"):
-            TextStringObject(label),
-
-        NameObject("/Rect"):
-            RectangleObject(
-                (
-                    x0,
-                    y0,
-                    x1,
-                    y1
-                )
-            ),
-
-        # Printable
-        NameObject("/F"):
-            NumberObject(4),
-
-        # Editable text field
-        NameObject("/Ff"):
-            NumberObject(0),
-
-        # Default appearance
-        NameObject("/DA"):
-            TextStringObject(
-                "/Helv 13 Tf 0 0 0 rg"
-            ),
-
-        # Visible appearance
-        NameObject("/AP"):
-            DictionaryObject({
-                NameObject("/N"):
-                    appearance_ref
-            }),
-
-        # Yellow background + black border
-        NameObject("/MK"):
-            DictionaryObject({
-
-                NameObject("/BG"):
-                    ArrayObject([
-                        FloatObject(1),
-                        FloatObject(1),
-                        FloatObject(0)
-                    ]),
-
-                NameObject("/BC"):
-                    ArrayObject([
-                        FloatObject(0),
-                        FloatObject(0),
-                        FloatObject(0)
-                    ])
-            }),
-
-        # Border
-        NameObject("/BS"):
-            DictionaryObject({
-
-                NameObject("/W"):
-                    NumberObject(1),
-
-                NameObject("/S"):
-                    NameObject("/S")
-            })
-    })
-
-    widget_ref = writer._add_object(
-        widget
-    )
-
-    # --------------------------------------------------------
-    # Add widget to page annotations
-    # --------------------------------------------------------
-
-    existing_annots = page.get(
-        NameObject("/Annots")
-    )
-
-    if existing_annots is None:
-
-        page[
-            NameObject("/Annots")
-        ] = ArrayObject([
-            widget_ref
-        ])
-
-    else:
-
-        annot_array = (
-            existing_annots.get_object()
-        )
-
-        annot_array.append(
-            widget_ref
-        )
-
-    # --------------------------------------------------------
-    # Add field to AcroForm
-    # --------------------------------------------------------
-
-    root = writer._root_object
-
-    acro_form = root.get(
-        NameObject("/AcroForm")
-    )
-
-    if acro_form is None:
-
-        acro_form = DictionaryObject()
-
-        root[
-            NameObject("/AcroForm")
-        ] = acro_form
-
-    fields = acro_form.get(
-        NameObject("/Fields")
-    )
-
-    if fields is None:
-
-        fields = ArrayObject()
-
-        acro_form[
-            NameObject("/Fields")
-        ] = fields
-
-    fields.append(
-        widget_ref
-    )
-
-    # --------------------------------------------------------
-    # Form appearance configuration
-    # --------------------------------------------------------
-
-    acro_form[
-        NameObject("/NeedAppearances")
-    ] = BooleanObject(True)
-
-    acro_form[
-        NameObject("/DA")
-    ] = TextStringObject(
-        "/Helv 13 Tf 0 0 0 rg"
-    )
-
-    # Default resources
-    acro_form[
-        NameObject("/DR")
-    ] = DictionaryObject({
-
-        NameObject("/Font"): DictionaryObject({
-
-            NameObject("/Helv"): DictionaryObject({
-
-                NameObject("/Type"):
-                    NameObject("/Font"),
-
-                NameObject("/Subtype"):
-                    NameObject("/Type1"),
-
-                NameObject("/BaseFont"):
-                    NameObject("/Helvetica")
-            })
-        })
-    })
+    return annot
 
 
 # ============================================================
-# ADD PDF SECTION
+# ADD SECTION
 # ============================================================
 
 def add_pdf_section(
-    writer,
-    pdf_path,
+    output_doc,
+    source_path,
     label,
     selected_pages=None
 ):
     """
-    Adds one PDF section.
+    Adds one PDF section to the output document.
 
-    selected_pages=None:
+    selected_pages=None
         Complete PDF.
 
-    selected_pages=[...]:
-        Selected pages only.
+    selected_pages=[...]
+        Only selected pages.
 
-    Adds the editable label only to the
-    first page of the section.
+    Adds editable text comment only to
+    the first page of the section.
     """
 
-    reader = PdfReader(
-        pdf_path
+    source_doc = pymupdf.open(
+        source_path
     )
 
-    total_pages = len(
-        reader.pages
-    )
+    try:
 
-    if total_pages == 0:
+        total_pages = source_doc.page_count
 
-        raise ValueError(
-            f"The PDF contains no pages:\n{pdf_path}"
-        )
-
-    # --------------------------------------------------------
-    # Determine pages
-    # --------------------------------------------------------
-
-    if selected_pages is None:
-
-        pages_to_add = list(
-            range(total_pages)
-        )
-
-    else:
-
-        pages_to_add = selected_pages
-
-    if not pages_to_add:
-
-        raise ValueError(
-            f"No pages selected from:\n{pdf_path}"
-        )
-
-    # --------------------------------------------------------
-    # Add pages
-    # --------------------------------------------------------
-
-    for position, page_index in enumerate(
-        pages_to_add
-    ):
-
-        if (
-            page_index < 0
-            or page_index >= total_pages
-        ):
-
+        if total_pages == 0:
             raise ValueError(
-                f"Invalid page index "
-                f"{page_index + 1} "
-                f"for:\n{pdf_path}"
+                f"The PDF contains no pages:\n"
+                f"{source_path}"
             )
 
-        page = reader.pages[
-            page_index
-        ]
-
-        # Add page
-        writer.add_page(
-            page
-        )
-
         # ----------------------------------------------------
-        # First page of section only
+        # Determine pages
         # ----------------------------------------------------
 
-        if position == 0:
+        if selected_pages is None:
 
+            pages_to_add = list(
+                range(total_pages)
+            )
+
+        else:
+
+            pages_to_add = selected_pages
+
+        if not pages_to_add:
+            raise ValueError(
+                f"No pages selected from:\n"
+                f"{source_path}"
+            )
+
+        # ----------------------------------------------------
+        # Add pages one by one
+        #
+        # This preserves the exact requested order.
+        # ----------------------------------------------------
+
+        first_output_page = None
+
+        for page_index in pages_to_add:
+
+            if (
+                page_index < 0
+                or page_index >= total_pages
+            ):
+                raise ValueError(
+                    f"Invalid page "
+                    f"{page_index + 1} "
+                    f"for:\n{source_path}"
+                )
+
+            # Current output page number
             output_page_number = (
-                len(writer.pages) - 1
+                output_doc.page_count
             )
 
-            add_editable_label(
-                writer,
-                output_page_number,
+            # Insert exactly one page
+            output_doc.insert_pdf(
+                source_doc,
+                from_page=page_index,
+                to_page=page_index
+            )
+
+            # Remember first page of section
+            if first_output_page is None:
+
+                first_output_page = (
+                    output_page_number
+                )
+
+        # ----------------------------------------------------
+        # Add editable text comment to first
+        # page of this section only
+        # ----------------------------------------------------
+
+        if first_output_page is not None:
+
+            output_page = output_doc[
+                first_output_page
+            ]
+
+            add_editable_text_comment(
+                output_page,
                 label
             )
+
+    finally:
+
+        source_doc.close()
 
 
 # ============================================================
@@ -534,19 +379,15 @@ def add_pdf_section(
 
 def select_pdf(title):
 
-    file_path = (
-        filedialog.askopenfilename(
-            title=title,
-            filetypes=[
-                (
-                    "PDF files",
-                    "*.pdf"
-                )
-            ]
-        )
+    return filedialog.askopenfilename(
+        title=title,
+        filetypes=[
+            (
+                "PDF files",
+                "*.pdf"
+            )
+        ]
     )
-
-    return file_path
 
 
 # ============================================================
@@ -556,13 +397,13 @@ def select_pdf(title):
 def main():
 
     root = tk.Tk()
-
     root.withdraw()
 
     try:
 
         # ====================================================
-        # 1. INPUT MODEL
+        # STEP 1
+        # INPUT MODEL
         # ====================================================
 
         input_model = select_pdf(
@@ -573,7 +414,8 @@ def main():
             return
 
         # ====================================================
-        # 2. DATASHEET
+        # STEP 2
+        # DATASHEET
         # ====================================================
 
         datasheet = select_pdf(
@@ -583,13 +425,19 @@ def main():
         if not datasheet:
             return
 
-        datasheet_reader = PdfReader(
+        # ----------------------------------------------------
+        # Get Datasheet page count
+        # ----------------------------------------------------
+
+        datasheet_doc = pymupdf.open(
             datasheet
         )
 
-        datasheet_total_pages = len(
-            datasheet_reader.pages
+        datasheet_total_pages = (
+            datasheet_doc.page_count
         )
+
+        datasheet_doc.close()
 
         # ----------------------------------------------------
         # Ask Datasheet pages
@@ -635,7 +483,8 @@ def main():
             return
 
         # ====================================================
-        # 3. PINFO SHEET
+        # STEP 3
+        # PINFO SHEET
         # ====================================================
 
         pinfo = select_pdf(
@@ -646,7 +495,8 @@ def main():
             return
 
         # ====================================================
-        # 4. ANFR SHEET
+        # STEP 4
+        # ANFR SHEET
         # ====================================================
 
         anfr = select_pdf(
@@ -657,7 +507,8 @@ def main():
             return
 
         # ====================================================
-        # 5. OUTPUT NAME
+        # STEP 5
+        # OUTPUT FILE NAME
         # ====================================================
 
         output_name = simpledialog.askstring(
@@ -669,20 +520,16 @@ def main():
         if output_name is None:
             return
 
-        output_name = (
-            output_name.strip()
-        )
+        output_name = output_name.strip()
 
         if not output_name:
             output_name = "Query"
 
+        # Remove .pdf
         if output_name.lower().endswith(
             ".pdf"
         ):
-
-            output_name = (
-                output_name[:-4]
-            )
+            output_name = output_name[:-4]
 
         # Remove invalid Windows characters
         output_name = re.sub(
@@ -695,7 +542,8 @@ def main():
             output_name = "Query"
 
         # ====================================================
-        # 6. OUTPUT FOLDER
+        # STEP 6
+        # OUTPUT FOLDER
         # ====================================================
 
         output_folder = (
@@ -755,67 +603,74 @@ def main():
             return
 
         # ====================================================
-        # CREATE FINAL PDF
+        # CREATE OUTPUT DOCUMENT
         # ====================================================
 
-        writer = PdfWriter()
+        output_doc = pymupdf.open()
 
-        # ----------------------------------------------------
-        # INPUT MODEL
-        # ----------------------------------------------------
+        try:
 
-        add_pdf_section(
-            writer=writer,
-            pdf_path=input_model,
-            label="Input model",
-            selected_pages=None
-        )
+            # ------------------------------------------------
+            # SECTION 1
+            # INPUT MODEL
+            # ------------------------------------------------
 
-        # ----------------------------------------------------
-        # DATASHEET
-        # ----------------------------------------------------
-
-        add_pdf_section(
-            writer=writer,
-            pdf_path=datasheet,
-            label="Datasheet",
-            selected_pages=datasheet_pages
-        )
-
-        # ----------------------------------------------------
-        # PINFO SHEET
-        # ----------------------------------------------------
-
-        add_pdf_section(
-            writer=writer,
-            pdf_path=pinfo,
-            label="Pinfo sheet",
-            selected_pages=None
-        )
-
-        # ----------------------------------------------------
-        # ANFR SHEET
-        # ----------------------------------------------------
-
-        add_pdf_section(
-            writer=writer,
-            pdf_path=anfr,
-            label="Anfr sheet",
-            selected_pages=None
-        )
-
-        # ====================================================
-        # WRITE OUTPUT
-        # ====================================================
-
-        with open(
-            output_path,
-            "wb"
-        ) as output_file:
-
-            writer.write(
-                output_file
+            add_pdf_section(
+                output_doc,
+                input_model,
+                "Input model",
+                None
             )
+
+            # ------------------------------------------------
+            # SECTION 2
+            # DATASHEET
+            # ------------------------------------------------
+
+            add_pdf_section(
+                output_doc,
+                datasheet,
+                "Datasheet",
+                datasheet_pages
+            )
+
+            # ------------------------------------------------
+            # SECTION 3
+            # PINFO SHEET
+            # ------------------------------------------------
+
+            add_pdf_section(
+                output_doc,
+                pinfo,
+                "Pinfo sheet",
+                None
+            )
+
+            # ------------------------------------------------
+            # SECTION 4
+            # ANFR SHEET
+            # ------------------------------------------------
+
+            add_pdf_section(
+                output_doc,
+                anfr,
+                "Anfr sheet",
+                None
+            )
+
+            # =================================================
+            # SAVE
+            # =================================================
+
+            output_doc.save(
+                output_path,
+                garbage=4,
+                deflate=True
+            )
+
+        finally:
+
+            output_doc.close()
 
         # ====================================================
         # SUCCESS
