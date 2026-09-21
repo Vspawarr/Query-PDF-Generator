@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, simpledialog
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.annotations import FreeText
+from pypdf.constants import AnnotationFlag
 
 
 # ============================================================
@@ -14,6 +15,7 @@ from pypdf.annotations import FreeText
 def parse_page_ranges(page_text, total_pages):
     """
     Converts page input such as:
+
         2
         2,3
         2,4,6
@@ -34,6 +36,10 @@ def parse_page_ranges(page_text, total_pages):
 
         if not part:
             continue
+
+        # ----------------------------------------------------
+        # Page range
+        # ----------------------------------------------------
 
         if "-" in part:
 
@@ -61,6 +67,10 @@ def parse_page_ranges(page_text, total_pages):
 
                 pages.append(page_number - 1)
 
+        # ----------------------------------------------------
+        # Single page
+        # ----------------------------------------------------
+
         else:
 
             page_number = int(part)
@@ -72,10 +82,14 @@ def parse_page_ranges(page_text, total_pages):
 
             pages.append(page_number - 1)
 
+    # --------------------------------------------------------
     # Remove duplicates while preserving order
+    # --------------------------------------------------------
+
     unique_pages = []
 
     for page in pages:
+
         if page not in unique_pages:
             unique_pages.append(page)
 
@@ -83,79 +97,110 @@ def parse_page_ranges(page_text, total_pages):
 
 
 # ============================================================
-# EDITABLE PDF LABEL
+# CREATE EDITABLE LABEL
 # ============================================================
 
-def add_editable_label(page, label):
+def create_editable_label(page, label):
     """
-    Adds an EDITABLE FreeText PDF annotation.
+    Creates an editable PDF FreeText annotation.
 
     Appearance:
         Yellow background
         Black border
-        Black text
+        Black bold text
 
-    The label is an annotation object rather than a
-    permanently drawn graphic.
-
-    Therefore compatible PDF editors can edit/move/resize it.
+    The annotation can be edited/moved/resized in
+    compatible PDF editors.
     """
 
     page_width = float(page.mediabox.width)
     page_height = float(page.mediabox.height)
 
     # --------------------------------------------------------
-    # Label appearance
+    # Label settings
     # --------------------------------------------------------
 
     font_size = 13
 
-    # Approximate width of the text.
-    # Helvetica-Bold is approximately 7.5 points per character
-    # at this font size.
+    # Approximate Helvetica-Bold text width.
+    # Small additional padding is included.
     text_width = len(label) * 7.5
 
     padding_x = 7
     padding_y = 5
 
-    label_width = text_width + (padding_x * 2)
-    label_height = font_size + (padding_y * 2)
+    label_width = (
+        text_width
+        + (padding_x * 2)
+    )
+
+    label_height = (
+        font_size
+        + (padding_y * 2)
+    )
 
     # --------------------------------------------------------
-    # Top-right position
+    # Position
+    # Top-right corner
     # --------------------------------------------------------
 
     margin_right = 25
     margin_top = 25
 
-    x1 = page_width - margin_right
-    y1 = page_height - margin_top
+    x1 = (
+        page_width
+        - margin_right
+    )
 
-    x0 = x1 - label_width
-    y0 = y1 - label_height
+    y1 = (
+        page_height
+        - margin_top
+    )
+
+    x0 = (
+        x1
+        - label_width
+    )
+
+    y0 = (
+        y1
+        - label_height
+    )
 
     # --------------------------------------------------------
-    # FreeText annotation
+    # Create FreeText annotation
     # --------------------------------------------------------
 
     annotation = FreeText(
         text=label,
+
         rect=(
             x0,
             y0,
             x1,
             y1
         ),
-        font="Helvetica-Bold",
+
+        font="Helvetica",
+
         bold=True,
+
         font_size=f"{font_size}pt",
+
         font_color="000000",
+
         border_color="000000",
+
         background_color="FFFF00"
     )
 
-    # Add editable annotation to page
-    page.add_annotation(annotation)
+    # --------------------------------------------------------
+    # Make annotation printable
+    # --------------------------------------------------------
+
+    annotation.flags = AnnotationFlag.PRINT
+
+    return annotation
 
 
 # ============================================================
@@ -169,7 +214,7 @@ def add_pdf_section(
     selected_pages=None
 ):
     """
-    Adds a PDF section to the final document.
+    Adds one section to the final PDF.
 
     selected_pages=None
         Adds the complete PDF.
@@ -177,8 +222,8 @@ def add_pdf_section(
     selected_pages=[...]
         Adds only selected pages.
 
-    An editable label is added ONLY to the first page
-    of each section.
+    An editable label is added only to the
+    first page of this section.
     """
 
     reader = PdfReader(pdf_path)
@@ -191,15 +236,21 @@ def add_pdf_section(
         )
 
     # --------------------------------------------------------
-    # Determine pages
+    # Determine pages to add
     # --------------------------------------------------------
 
     if selected_pages is None:
-        pages_to_add = list(range(total_pages))
+
+        pages_to_add = list(
+            range(total_pages)
+        )
+
     else:
+
         pages_to_add = selected_pages
 
     if not pages_to_add:
+
         raise ValueError(
             f"No pages selected from:\n{pdf_path}"
         )
@@ -208,31 +259,55 @@ def add_pdf_section(
     # Add pages
     # --------------------------------------------------------
 
-    for position, page_index in enumerate(pages_to_add):
+    for position, page_index in enumerate(
+        pages_to_add
+    ):
 
-        if page_index < 0 or page_index >= total_pages:
+        if (
+            page_index < 0
+            or page_index >= total_pages
+        ):
+
             raise ValueError(
-                f"Invalid page index {page_index + 1} "
+                f"Invalid page index "
+                f"{page_index + 1} "
                 f"for:\n{pdf_path}"
             )
 
         page = reader.pages[page_index]
 
         # ----------------------------------------------------
-        # Add editable label only to first section page
+        # Add page to writer FIRST
+        # ----------------------------------------------------
+
+        writer.add_page(page)
+
+        # ----------------------------------------------------
+        # Add editable label ONLY to first page
+        # of this section
         # ----------------------------------------------------
 
         if position == 0:
-            add_editable_label(
+
+            annotation = create_editable_label(
                 page,
                 label
             )
 
-        writer.add_page(page)
+            # The page has now been added to writer.
+            # Use its page number in the output PDF.
+            output_page_number = (
+                len(writer.pages) - 1
+            )
+
+            writer.add_annotation(
+                page_number=output_page_number,
+                annotation=annotation
+            )
 
 
 # ============================================================
-# SELECT PDF
+# SELECT PDF FILE
 # ============================================================
 
 def select_pdf(title):
@@ -251,10 +326,14 @@ def select_pdf(title):
 
 
 # ============================================================
-# MAIN
+# MAIN APPLICATION
 # ============================================================
 
 def main():
+
+    # --------------------------------------------------------
+    # Create hidden Tkinter window
+    # --------------------------------------------------------
 
     root = tk.Tk()
     root.withdraw()
@@ -262,7 +341,8 @@ def main():
     try:
 
         # ====================================================
-        # 1. INPUT MODEL
+        # STEP 1
+        # INPUT MODEL
         # ====================================================
 
         input_model = select_pdf(
@@ -273,7 +353,8 @@ def main():
             return
 
         # ====================================================
-        # 2. DATASHEET
+        # STEP 2
+        # DATASHEET / PBLATT
         # ====================================================
 
         datasheet = select_pdf(
@@ -282,6 +363,10 @@ def main():
 
         if not datasheet:
             return
+
+        # ----------------------------------------------------
+        # Read Datasheet page count
+        # ----------------------------------------------------
 
         datasheet_reader = PdfReader(
             datasheet
@@ -292,19 +377,22 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Datasheet page selection
+        # Ask required Datasheet pages
         # ----------------------------------------------------
 
         page_text = simpledialog.askstring(
             "Datasheet Pages",
+
             (
                 "Enter required Datasheet pages.\n\n"
+
                 "Examples:\n"
                 "2\n"
                 "2,3\n"
                 "2,4,6\n"
                 "2-4\n"
                 "2,5-7\n\n"
+
                 f"Total pages available: "
                 f"{datasheet_total_pages}"
             )
@@ -330,7 +418,8 @@ def main():
             return
 
         # ====================================================
-        # 3. PINFO SHEET
+        # STEP 3
+        # PINFO SHEET
         # ====================================================
 
         pinfo = select_pdf(
@@ -341,7 +430,8 @@ def main():
             return
 
         # ====================================================
-        # 4. ANFR SHEET
+        # STEP 4
+        # ANFR SHEET
         # ====================================================
 
         anfr = select_pdf(
@@ -352,7 +442,8 @@ def main():
             return
 
         # ====================================================
-        # 5. OUTPUT FILE NAME
+        # STEP 5
+        # OUTPUT FILE NAME
         # ====================================================
 
         output_name = simpledialog.askstring(
@@ -369,10 +460,20 @@ def main():
         if not output_name:
             output_name = "Query"
 
-        if output_name.lower().endswith(".pdf"):
+        # ----------------------------------------------------
+        # Remove .pdf if user entered it
+        # ----------------------------------------------------
+
+        if output_name.lower().endswith(
+            ".pdf"
+        ):
+
             output_name = output_name[:-4]
 
-        # Remove invalid Windows filename characters
+        # ----------------------------------------------------
+        # Remove invalid Windows characters
+        # ----------------------------------------------------
+
         output_name = re.sub(
             r'[<>:"/\\|?*]',
             "_",
@@ -383,7 +484,8 @@ def main():
             output_name = "Query"
 
         # ====================================================
-        # 6. OUTPUT FOLDER
+        # STEP 6
+        # OUTPUT FOLDER
         # ====================================================
 
         output_folder = filedialog.askdirectory(
@@ -409,12 +511,19 @@ def main():
             os.path.abspath(anfr)
         ]
 
-        if os.path.abspath(output_path) in source_files:
+        if (
+            os.path.abspath(output_path)
+            in source_files
+        ):
 
             messagebox.showerror(
                 "Invalid Output Location",
-                "The output file cannot overwrite "
-                "one of the source PDFs."
+
+                (
+                    "The output file cannot "
+                    "overwrite one of the "
+                    "source PDFs."
+                )
             )
 
             return
@@ -426,7 +535,9 @@ def main():
         writer = PdfWriter()
 
         # ----------------------------------------------------
+        # SECTION 1
         # INPUT MODEL
+        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -437,7 +548,9 @@ def main():
         )
 
         # ----------------------------------------------------
+        # SECTION 2
         # DATASHEET
+        # Selected pages only
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -448,7 +561,9 @@ def main():
         )
 
         # ----------------------------------------------------
-        # PINFO
+        # SECTION 3
+        # PINFO SHEET
+        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -459,7 +574,9 @@ def main():
         )
 
         # ----------------------------------------------------
-        # ANFR
+        # SECTION 4
+        # ANFR SHEET
+        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -470,7 +587,7 @@ def main():
         )
 
         # ====================================================
-        # WRITE PDF
+        # WRITE FINAL PDF
         # ====================================================
 
         with open(
@@ -483,11 +600,12 @@ def main():
             )
 
         # ====================================================
-        # SUCCESS
+        # SUCCESS MESSAGE
         # ====================================================
 
         messagebox.showinfo(
             "Query PDF Generated",
+
             (
                 "Query PDF generated successfully!\n\n"
                 f"Output:\n{output_path}"
@@ -498,6 +616,7 @@ def main():
 
         messagebox.showerror(
             "Error",
+
             (
                 "An error occurred while generating "
                 "the Query PDF.\n\n"
