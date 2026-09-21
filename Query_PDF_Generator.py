@@ -1,20 +1,10 @@
 import os
 import re
-import tempfile
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
-try:
-    from pypdf import PdfReader, PdfWriter
-    from reportlab.pdfgen import canvas
-except ImportError:
-    messagebox.showerror(
-        "Missing Libraries",
-        "Required libraries are missing.\n\n"
-        "Please install:\n"
-        "pip install pypdf reportlab"
-    )
-    raise
+from pypdf import PdfReader, PdfWriter
+from pypdf.annotations import FreeText
 
 
 # ============================================================
@@ -23,8 +13,7 @@ except ImportError:
 
 def parse_page_ranges(page_text, total_pages):
     """
-    Converts user input such as:
-
+    Converts page input such as:
         2
         2,3
         2,4,6
@@ -32,11 +21,6 @@ def parse_page_ranges(page_text, total_pages):
         2,5-7
 
     into zero-based PDF page indexes.
-
-    Example:
-        1,3-5
-    becomes:
-        [0, 2, 3, 4]
     """
 
     if not page_text.strip():
@@ -44,16 +28,15 @@ def parse_page_ranges(page_text, total_pages):
 
     pages = []
 
-    parts = page_text.split(",")
+    for part in page_text.split(","):
 
-    for part in parts:
         part = part.strip()
 
         if not part:
             continue
 
-        # Range, e.g. 2-5
         if "-" in part:
+
             range_parts = part.split("-")
 
             if len(range_parts) != 2:
@@ -79,7 +62,7 @@ def parse_page_ranges(page_text, total_pages):
                 pages.append(page_number - 1)
 
         else:
-            # Single page
+
             page_number = int(part)
 
             if page_number < 1 or page_number > total_pages:
@@ -100,118 +83,79 @@ def parse_page_ranges(page_text, total_pages):
 
 
 # ============================================================
-# SECTION LABEL OVERLAY
+# EDITABLE PDF LABEL
 # ============================================================
 
-def make_label_overlay(
-    page_width,
-    page_height,
-    label,
-    output_path
-):
+def add_editable_label(page, label):
     """
-    Creates ONLY the small section-name label.
+    Adds an EDITABLE FreeText PDF annotation.
 
     Appearance:
         Yellow background
         Black border
         Black text
 
-    The rectangle is tightly fitted around the text.
+    The label is an annotation object rather than a
+    permanently drawn graphic.
 
-    No other shapes, patches or colored areas are created.
+    Therefore compatible PDF editors can edit/move/resize it.
     """
 
-    c = canvas.Canvas(
-        output_path,
-        pagesize=(page_width, page_height)
-    )
+    page_width = float(page.mediabox.width)
+    page_height = float(page.mediabox.height)
 
-    font_name = "Helvetica-Bold"
+    # --------------------------------------------------------
+    # Label appearance
+    # --------------------------------------------------------
+
     font_size = 13
 
-    c.setFont(
-        font_name,
-        font_size
-    )
+    # Approximate width of the text.
+    # Helvetica-Bold is approximately 7.5 points per character
+    # at this font size.
+    text_width = len(label) * 7.5
 
-    # Calculate exact text width
-    text_width = c.stringWidth(
-        label,
-        font_name,
-        font_size
-    )
-
-    # Small padding around text
     padding_x = 7
     padding_y = 5
 
     label_width = text_width + (padding_x * 2)
     label_height = font_size + (padding_y * 2)
 
-    # Position at top-right
+    # --------------------------------------------------------
+    # Top-right position
+    # --------------------------------------------------------
+
     margin_right = 25
     margin_top = 25
 
-    x = (
-        page_width
-        - margin_right
-        - label_width
-    )
+    x1 = page_width - margin_right
+    y1 = page_height - margin_top
 
-    y = (
-        page_height
-        - margin_top
-        - label_height
-    )
+    x0 = x1 - label_width
+    y0 = y1 - label_height
 
     # --------------------------------------------------------
-    # YELLOW RECTANGLE WITH BLACK BORDER
+    # FreeText annotation
     # --------------------------------------------------------
 
-    c.setFillColorRGB(
-        1,
-        1,
-        0
+    annotation = FreeText(
+        text=label,
+        rect=(
+            x0,
+            y0,
+            x1,
+            y1
+        ),
+        font="Helvetica-Bold",
+        bold=True,
+        font_size=f"{font_size}pt",
+        font_color="000000",
+        border_color="000000",
+        background_color="FFFF00"
     )
 
-    c.setStrokeColorRGB(
-        0,
-        0,
-        0
-    )
-
-    c.setLineWidth(1)
-
-    c.rect(
-        x,
-        y,
-        label_width,
-        label_height,
-        fill=1,
-        stroke=1
-    )
-
-    # --------------------------------------------------------
-    # BLACK TEXT
-    # --------------------------------------------------------
-
-    c.setFillColorRGB(
-        0,
-        0,
-        0
-    )
-
-    text_x = x + padding_x
-    text_y = y + padding_y + 1
-
-    c.drawString(
-        text_x,
-        text_y,
-        label
-    )
-
-    c.save()
+    # Add editable annotation to page
+    page.add_annotation(annotation)
 
 
 # ============================================================
@@ -225,14 +169,16 @@ def add_pdf_section(
     selected_pages=None
 ):
     """
-    Adds pages from one PDF into the final PDF.
+    Adds a PDF section to the final document.
 
-    selected_pages:
-        None = all pages
-        List = selected zero-based page indexes
+    selected_pages=None
+        Adds the complete PDF.
 
-    The section label is applied only to the first page
-    of the section.
+    selected_pages=[...]
+        Adds only selected pages.
+
+    An editable label is added ONLY to the first page
+    of each section.
     """
 
     reader = PdfReader(pdf_path)
@@ -245,7 +191,7 @@ def add_pdf_section(
         )
 
     # --------------------------------------------------------
-    # Determine pages to add
+    # Determine pages
     # --------------------------------------------------------
 
     if selected_pages is None:
@@ -259,7 +205,7 @@ def add_pdf_section(
         )
 
     # --------------------------------------------------------
-    # Add selected pages
+    # Add pages
     # --------------------------------------------------------
 
     for position, page_index in enumerate(pages_to_add):
@@ -273,67 +219,23 @@ def add_pdf_section(
         page = reader.pages[page_index]
 
         # ----------------------------------------------------
-        # Add label ONLY to first page of this section
+        # Add editable label only to first section page
         # ----------------------------------------------------
 
         if position == 0:
-
-            page_width = float(
-                page.mediabox.width
+            add_editable_label(
+                page,
+                label
             )
-
-            page_height = float(
-                page.mediabox.height
-            )
-
-            with tempfile.NamedTemporaryFile(
-                suffix=".pdf",
-                delete=False
-            ) as temp_file:
-
-                overlay_path = temp_file.name
-
-            try:
-
-                make_label_overlay(
-                    page_width,
-                    page_height,
-                    label,
-                    overlay_path
-                )
-
-                overlay_reader = PdfReader(
-                    overlay_path
-                )
-
-                overlay_page = (
-                    overlay_reader.pages[0]
-                )
-
-                page.merge_page(
-                    overlay_page
-                )
-
-            finally:
-
-                if os.path.exists(
-                    overlay_path
-                ):
-                    os.remove(
-                        overlay_path
-                    )
 
         writer.add_page(page)
 
 
 # ============================================================
-# SELECT PDF FILE
+# SELECT PDF
 # ============================================================
 
 def select_pdf(title):
-    """
-    Opens a PDF file selection dialog.
-    """
 
     file_path = filedialog.askopenfilename(
         title=title,
@@ -349,14 +251,10 @@ def select_pdf(title):
 
 
 # ============================================================
-# MAIN APPLICATION
+# MAIN
 # ============================================================
 
 def main():
-
-    # --------------------------------------------------------
-    # Hide main Tkinter window
-    # --------------------------------------------------------
 
     root = tk.Tk()
     root.withdraw()
@@ -364,7 +262,7 @@ def main():
     try:
 
         # ====================================================
-        # STEP 1 - INPUT MODEL
+        # 1. INPUT MODEL
         # ====================================================
 
         input_model = select_pdf(
@@ -375,7 +273,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 2 - DATASHEET
+        # 2. DATASHEET
         # ====================================================
 
         datasheet = select_pdf(
@@ -385,7 +283,6 @@ def main():
         if not datasheet:
             return
 
-        # Read datasheet page count
         datasheet_reader = PdfReader(
             datasheet
         )
@@ -395,7 +292,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Ask which datasheet pages are required
+        # Datasheet page selection
         # ----------------------------------------------------
 
         page_text = simpledialog.askstring(
@@ -433,7 +330,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 3 - PINFO SHEET
+        # 3. PINFO SHEET
         # ====================================================
 
         pinfo = select_pdf(
@@ -444,7 +341,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 4 - ANFR SHEET
+        # 4. ANFR SHEET
         # ====================================================
 
         anfr = select_pdf(
@@ -455,7 +352,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 5 - OUTPUT FILE NAME
+        # 5. OUTPUT FILE NAME
         # ====================================================
 
         output_name = simpledialog.askstring(
@@ -472,10 +369,7 @@ def main():
         if not output_name:
             output_name = "Query"
 
-        # Remove .pdf if user entered it
-        if output_name.lower().endswith(
-            ".pdf"
-        ):
+        if output_name.lower().endswith(".pdf"):
             output_name = output_name[:-4]
 
         # Remove invalid Windows filename characters
@@ -489,7 +383,7 @@ def main():
             output_name = "Query"
 
         # ====================================================
-        # STEP 6 - SELECT OUTPUT FOLDER
+        # 6. OUTPUT FOLDER
         # ====================================================
 
         output_folder = filedialog.askdirectory(
@@ -505,7 +399,7 @@ def main():
         )
 
         # ====================================================
-        # PREVENT OVERWRITING SOURCE FILES
+        # PREVENT SOURCE OVERWRITE
         # ====================================================
 
         source_files = [
@@ -532,8 +426,7 @@ def main():
         writer = PdfWriter()
 
         # ----------------------------------------------------
-        # SECTION 1
-        # Input model - COMPLETE PDF
+        # INPUT MODEL
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -544,8 +437,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 2
-        # Datasheet - SELECTED PAGES ONLY
+        # DATASHEET
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -556,8 +448,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 3
-        # Pinfo sheet - COMPLETE PDF
+        # PINFO
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -568,8 +459,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 4
-        # Anfr sheet - COMPLETE PDF
+        # ANFR
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -580,7 +470,7 @@ def main():
         )
 
         # ====================================================
-        # WRITE FINAL PDF
+        # WRITE PDF
         # ====================================================
 
         with open(
@@ -593,7 +483,7 @@ def main():
             )
 
         # ====================================================
-        # SUCCESS MESSAGE
+        # SUCCESS
         # ====================================================
 
         messagebox.showinfo(
