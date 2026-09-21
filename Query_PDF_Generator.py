@@ -4,8 +4,17 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.annotations import FreeText
-from pypdf.constants import AnnotationFlag
+from pypdf.generic import (
+    NameObject,
+    DictionaryObject,
+    ArrayObject,
+    FloatObject,
+    NumberObject,
+    TextStringObject,
+    DecodedStreamObject,
+    RectangleObject,
+    BooleanObject,
+)
 
 
 # ============================================================
@@ -14,15 +23,14 @@ from pypdf.constants import AnnotationFlag
 
 def parse_page_ranges(page_text, total_pages):
     """
-    Converts page input such as:
-
+    Converts:
         2
         2,3
         2,4,6
         2-4
         2,5-7
 
-    into zero-based PDF page indexes.
+    into zero-based page indexes.
     """
 
     if not page_text.strip():
@@ -37,10 +45,7 @@ def parse_page_ranges(page_text, total_pages):
         if not part:
             continue
 
-        # ----------------------------------------------------
         # Page range
-        # ----------------------------------------------------
-
         if "-" in part:
 
             range_parts = part.split("-")
@@ -67,10 +72,7 @@ def parse_page_ranges(page_text, total_pages):
 
                 pages.append(page_number - 1)
 
-        # ----------------------------------------------------
         # Single page
-        # ----------------------------------------------------
-
         else:
 
             page_number = int(part)
@@ -82,10 +84,7 @@ def parse_page_ranges(page_text, total_pages):
 
             pages.append(page_number - 1)
 
-    # --------------------------------------------------------
     # Remove duplicates while preserving order
-    # --------------------------------------------------------
-
     unique_pages = []
 
     for page in pages:
@@ -97,21 +96,22 @@ def parse_page_ranges(page_text, total_pages):
 
 
 # ============================================================
-# CREATE EDITABLE LABEL
+# EDITABLE YELLOW LABEL / PDF FORM FIELD
 # ============================================================
 
-def create_editable_label(page, label):
+def add_editable_label(writer, page_number, label):
     """
-    Creates an editable PDF FreeText annotation.
+    Adds a visible and editable PDF text field.
 
     Appearance:
         Yellow background
         Black border
         Black bold text
 
-    The annotation can be edited/moved/resized in
-    compatible PDF editors.
+    The field is an actual PDF form field, not a static drawing.
     """
+
+    page = writer.pages[page_number]
 
     page_width = float(page.mediabox.width)
     page_height = float(page.mediabox.height)
@@ -122,8 +122,7 @@ def create_editable_label(page, label):
 
     font_size = 13
 
-    # Approximate Helvetica-Bold text width.
-    # Small additional padding is included.
+    # Approximate Helvetica width
     text_width = len(label) * 7.5
 
     padding_x = 7
@@ -140,67 +139,291 @@ def create_editable_label(page, label):
     )
 
     # --------------------------------------------------------
-    # Position
-    # Top-right corner
+    # Position - top right
     # --------------------------------------------------------
 
     margin_right = 25
     margin_top = 25
 
-    x1 = (
-        page_width
-        - margin_right
+    x1 = page_width - margin_right
+    y1 = page_height - margin_top
+
+    x0 = x1 - label_width
+    y0 = y1 - label_height
+
+    # --------------------------------------------------------
+    # Appearance stream
+    # --------------------------------------------------------
+
+    appearance = DecodedStreamObject()
+
+    # Escape PDF text characters
+    safe_label = (
+        label
+        .replace("\\", "\\\\")
+        .replace("(", "\\(")
+        .replace(")", "\\)")
     )
 
-    y1 = (
-        page_height
-        - margin_top
+    appearance_content = f"""
+q
+
+1 1 0 rg
+0 0 {label_width} {label_height} re
+f
+
+0 0 0 RG
+1 w
+
+0.5 0.5 m
+{label_width - 0.5} 0.5 l
+{label_width - 0.5} {label_height - 0.5} l
+0.5 {label_height - 0.5} l
+0.5 0.5 l
+S
+
+BT
+/Helv {font_size} Tf
+0 0 0 rg
+{padding_x} {padding_y + 1} Td
+({safe_label}) Tj
+ET
+
+Q
+"""
+
+    appearance.set_data(
+        appearance_content.encode("latin-1")
     )
 
-    x0 = (
-        x1
-        - label_width
+    appearance[
+        NameObject("/Type")
+    ] = NameObject("/XObject")
+
+    appearance[
+        NameObject("/Subtype")
+    ] = NameObject("/Form")
+
+    appearance[
+        NameObject("/BBox")
+    ] = RectangleObject(
+        (
+            0,
+            0,
+            label_width,
+            label_height
+        )
     )
 
-    y0 = (
-        y1
-        - label_height
+    # Helvetica resource
+    appearance[
+        NameObject("/Resources")
+    ] = DictionaryObject({
+
+        NameObject("/Font"): DictionaryObject({
+
+            NameObject("/Helv"): DictionaryObject({
+
+                NameObject("/Type"):
+                    NameObject("/Font"),
+
+                NameObject("/Subtype"):
+                    NameObject("/Type1"),
+
+                NameObject("/BaseFont"):
+                    NameObject("/Helvetica")
+            })
+        })
+    })
+
+    appearance_ref = writer._add_object(
+        appearance
     )
 
     # --------------------------------------------------------
-    # Create FreeText annotation
+    # PDF Form Widget
     # --------------------------------------------------------
 
-    annotation = FreeText(
-        text=label,
+    widget = DictionaryObject({
 
-        rect=(
-            x0,
-            y0,
-            x1,
-            y1
-        ),
+        NameObject("/Type"):
+            NameObject("/Annot"),
 
-        font="Helvetica",
+        NameObject("/Subtype"):
+            NameObject("/Widget"),
 
-        bold=True,
+        NameObject("/FT"):
+            NameObject("/Tx"),
 
-        font_size=f"{font_size}pt",
+        NameObject("/T"):
+            TextStringObject(label),
 
-        font_color="000000",
+        NameObject("/V"):
+            TextStringObject(label),
 
-        border_color="000000",
+        NameObject("/DV"):
+            TextStringObject(label),
 
-        background_color="FFFF00"
+        NameObject("/Rect"):
+            RectangleObject(
+                (
+                    x0,
+                    y0,
+                    x1,
+                    y1
+                )
+            ),
+
+        # Printable
+        NameObject("/F"):
+            NumberObject(4),
+
+        # Editable text field
+        NameObject("/Ff"):
+            NumberObject(0),
+
+        # Default appearance
+        NameObject("/DA"):
+            TextStringObject(
+                "/Helv 13 Tf 0 0 0 rg"
+            ),
+
+        # Visible appearance
+        NameObject("/AP"):
+            DictionaryObject({
+                NameObject("/N"):
+                    appearance_ref
+            }),
+
+        # Yellow background + black border
+        NameObject("/MK"):
+            DictionaryObject({
+
+                NameObject("/BG"):
+                    ArrayObject([
+                        FloatObject(1),
+                        FloatObject(1),
+                        FloatObject(0)
+                    ]),
+
+                NameObject("/BC"):
+                    ArrayObject([
+                        FloatObject(0),
+                        FloatObject(0),
+                        FloatObject(0)
+                    ])
+            }),
+
+        # Border
+        NameObject("/BS"):
+            DictionaryObject({
+
+                NameObject("/W"):
+                    NumberObject(1),
+
+                NameObject("/S"):
+                    NameObject("/S")
+            })
+    })
+
+    widget_ref = writer._add_object(
+        widget
     )
 
     # --------------------------------------------------------
-    # Make annotation printable
+    # Add widget to page annotations
     # --------------------------------------------------------
 
-    annotation.flags = AnnotationFlag.PRINT
+    existing_annots = page.get(
+        NameObject("/Annots")
+    )
 
-    return annotation
+    if existing_annots is None:
+
+        page[
+            NameObject("/Annots")
+        ] = ArrayObject([
+            widget_ref
+        ])
+
+    else:
+
+        annot_array = (
+            existing_annots.get_object()
+        )
+
+        annot_array.append(
+            widget_ref
+        )
+
+    # --------------------------------------------------------
+    # Add field to AcroForm
+    # --------------------------------------------------------
+
+    root = writer._root_object
+
+    acro_form = root.get(
+        NameObject("/AcroForm")
+    )
+
+    if acro_form is None:
+
+        acro_form = DictionaryObject()
+
+        root[
+            NameObject("/AcroForm")
+        ] = acro_form
+
+    fields = acro_form.get(
+        NameObject("/Fields")
+    )
+
+    if fields is None:
+
+        fields = ArrayObject()
+
+        acro_form[
+            NameObject("/Fields")
+        ] = fields
+
+    fields.append(
+        widget_ref
+    )
+
+    # --------------------------------------------------------
+    # Form appearance configuration
+    # --------------------------------------------------------
+
+    acro_form[
+        NameObject("/NeedAppearances")
+    ] = BooleanObject(True)
+
+    acro_form[
+        NameObject("/DA")
+    ] = TextStringObject(
+        "/Helv 13 Tf 0 0 0 rg"
+    )
+
+    # Default resources
+    acro_form[
+        NameObject("/DR")
+    ] = DictionaryObject({
+
+        NameObject("/Font"): DictionaryObject({
+
+            NameObject("/Helv"): DictionaryObject({
+
+                NameObject("/Type"):
+                    NameObject("/Font"),
+
+                NameObject("/Subtype"):
+                    NameObject("/Type1"),
+
+                NameObject("/BaseFont"):
+                    NameObject("/Helvetica")
+            })
+        })
+    })
 
 
 # ============================================================
@@ -214,29 +437,34 @@ def add_pdf_section(
     selected_pages=None
 ):
     """
-    Adds one section to the final PDF.
+    Adds one PDF section.
 
-    selected_pages=None
-        Adds the complete PDF.
+    selected_pages=None:
+        Complete PDF.
 
-    selected_pages=[...]
-        Adds only selected pages.
+    selected_pages=[...]:
+        Selected pages only.
 
-    An editable label is added only to the
-    first page of this section.
+    Adds the editable label only to the
+    first page of the section.
     """
 
-    reader = PdfReader(pdf_path)
+    reader = PdfReader(
+        pdf_path
+    )
 
-    total_pages = len(reader.pages)
+    total_pages = len(
+        reader.pages
+    )
 
     if total_pages == 0:
+
         raise ValueError(
             f"The PDF contains no pages:\n{pdf_path}"
         )
 
     # --------------------------------------------------------
-    # Determine pages to add
+    # Determine pages
     # --------------------------------------------------------
 
     if selected_pages is None:
@@ -274,52 +502,48 @@ def add_pdf_section(
                 f"for:\n{pdf_path}"
             )
 
-        page = reader.pages[page_index]
+        page = reader.pages[
+            page_index
+        ]
+
+        # Add page
+        writer.add_page(
+            page
+        )
 
         # ----------------------------------------------------
-        # Add page to writer FIRST
-        # ----------------------------------------------------
-
-        writer.add_page(page)
-
-        # ----------------------------------------------------
-        # Add editable label ONLY to first page
-        # of this section
+        # First page of section only
         # ----------------------------------------------------
 
         if position == 0:
 
-            annotation = create_editable_label(
-                page,
-                label
-            )
-
-            # The page has now been added to writer.
-            # Use its page number in the output PDF.
             output_page_number = (
                 len(writer.pages) - 1
             )
 
-            writer.add_annotation(
-                page_number=output_page_number,
-                annotation=annotation
+            add_editable_label(
+                writer,
+                output_page_number,
+                label
             )
 
 
 # ============================================================
-# SELECT PDF FILE
+# SELECT PDF
 # ============================================================
 
 def select_pdf(title):
 
-    file_path = filedialog.askopenfilename(
-        title=title,
-        filetypes=[
-            (
-                "PDF files",
-                "*.pdf"
-            )
-        ]
+    file_path = (
+        filedialog.askopenfilename(
+            title=title,
+            filetypes=[
+                (
+                    "PDF files",
+                    "*.pdf"
+                )
+            ]
+        )
     )
 
     return file_path
@@ -331,18 +555,14 @@ def select_pdf(title):
 
 def main():
 
-    # --------------------------------------------------------
-    # Create hidden Tkinter window
-    # --------------------------------------------------------
-
     root = tk.Tk()
+
     root.withdraw()
 
     try:
 
         # ====================================================
-        # STEP 1
-        # INPUT MODEL
+        # 1. INPUT MODEL
         # ====================================================
 
         input_model = select_pdf(
@@ -353,8 +573,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 2
-        # DATASHEET / PBLATT
+        # 2. DATASHEET
         # ====================================================
 
         datasheet = select_pdf(
@@ -363,10 +582,6 @@ def main():
 
         if not datasheet:
             return
-
-        # ----------------------------------------------------
-        # Read Datasheet page count
-        # ----------------------------------------------------
 
         datasheet_reader = PdfReader(
             datasheet
@@ -377,7 +592,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Ask required Datasheet pages
+        # Ask Datasheet pages
         # ----------------------------------------------------
 
         page_text = simpledialog.askstring(
@@ -403,9 +618,11 @@ def main():
 
         try:
 
-            datasheet_pages = parse_page_ranges(
-                page_text,
-                datasheet_total_pages
+            datasheet_pages = (
+                parse_page_ranges(
+                    page_text,
+                    datasheet_total_pages
+                )
             )
 
         except Exception as error:
@@ -418,8 +635,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 3
-        # PINFO SHEET
+        # 3. PINFO SHEET
         # ====================================================
 
         pinfo = select_pdf(
@@ -430,8 +646,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 4
-        # ANFR SHEET
+        # 4. ANFR SHEET
         # ====================================================
 
         anfr = select_pdf(
@@ -442,8 +657,7 @@ def main():
             return
 
         # ====================================================
-        # STEP 5
-        # OUTPUT FILE NAME
+        # 5. OUTPUT NAME
         # ====================================================
 
         output_name = simpledialog.askstring(
@@ -455,25 +669,22 @@ def main():
         if output_name is None:
             return
 
-        output_name = output_name.strip()
+        output_name = (
+            output_name.strip()
+        )
 
         if not output_name:
             output_name = "Query"
-
-        # ----------------------------------------------------
-        # Remove .pdf if user entered it
-        # ----------------------------------------------------
 
         if output_name.lower().endswith(
             ".pdf"
         ):
 
-            output_name = output_name[:-4]
+            output_name = (
+                output_name[:-4]
+            )
 
-        # ----------------------------------------------------
         # Remove invalid Windows characters
-        # ----------------------------------------------------
-
         output_name = re.sub(
             r'[<>:"/\\|?*]',
             "_",
@@ -484,12 +695,13 @@ def main():
             output_name = "Query"
 
         # ====================================================
-        # STEP 6
-        # OUTPUT FOLDER
+        # 6. OUTPUT FOLDER
         # ====================================================
 
-        output_folder = filedialog.askdirectory(
-            title="Select Output Folder"
+        output_folder = (
+            filedialog.askdirectory(
+                title="Select Output Folder"
+            )
         )
 
         if not output_folder:
@@ -505,14 +717,28 @@ def main():
         # ====================================================
 
         source_files = [
-            os.path.abspath(input_model),
-            os.path.abspath(datasheet),
-            os.path.abspath(pinfo),
-            os.path.abspath(anfr)
+
+            os.path.abspath(
+                input_model
+            ),
+
+            os.path.abspath(
+                datasheet
+            ),
+
+            os.path.abspath(
+                pinfo
+            ),
+
+            os.path.abspath(
+                anfr
+            )
         ]
 
         if (
-            os.path.abspath(output_path)
+            os.path.abspath(
+                output_path
+            )
             in source_files
         ):
 
@@ -535,9 +761,7 @@ def main():
         writer = PdfWriter()
 
         # ----------------------------------------------------
-        # SECTION 1
         # INPUT MODEL
-        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -548,9 +772,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 2
         # DATASHEET
-        # Selected pages only
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -561,9 +783,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 3
         # PINFO SHEET
-        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -574,9 +794,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # SECTION 4
         # ANFR SHEET
-        # Complete PDF
         # ----------------------------------------------------
 
         add_pdf_section(
@@ -587,7 +805,7 @@ def main():
         )
 
         # ====================================================
-        # WRITE FINAL PDF
+        # WRITE OUTPUT
         # ====================================================
 
         with open(
@@ -600,7 +818,7 @@ def main():
             )
 
         # ====================================================
-        # SUCCESS MESSAGE
+        # SUCCESS
         # ====================================================
 
         messagebox.showinfo(
