@@ -85,7 +85,12 @@ def parse_page_ranges(page_text, total_pages):
 
         else:
 
-            page_number = int(part)
+            try:
+                page_number = int(part)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid page number: {part}"
+                )
 
             if (
                 page_number < 1
@@ -118,68 +123,66 @@ def parse_page_ranges(page_text, total_pages):
 # ADD EDITABLE TEXT COMMENT
 # ============================================================
 
-def add_editable_text_comment(
-    page,
-    text
-):
+def add_editable_text_comment(page, text):
     """
     Adds a visible editable PDF FreeText annotation.
 
-    This is intended to behave like an editable
-    PDF text comment / text box.
-
     Appearance:
-        Yellow background
-        Black border
-        Bold black text
-        Center aligned
+        - Yellow background
+        - Black border
+        - Bold black text
+        - Center aligned
+        - Tight fit around text
+        - Top-right position
+
+    IMPORTANT:
+        This uses plain text only.
+        No HTML.
+        No richtext.
     """
 
-    page_width = page.rect.width
-    page_height = page.rect.height
-
     # --------------------------------------------------------
-    # Label dimensions
+    # FONT SETTINGS
     # --------------------------------------------------------
 
-    font_size = 11
+    font_size = 10
 
-    # Approximate width for Helvetica
+    # Helvetica Bold
+    font_name = "HeBo"
+
+    # --------------------------------------------------------
+    # CALCULATE TEXT WIDTH
+    # --------------------------------------------------------
+
     text_width = pymupdf.get_text_length(
         text,
-        fontname="helv",
+        fontname=font_name,
         fontsize=font_size
     )
 
-    padding_x = 8
-    padding_y = 5
+    # --------------------------------------------------------
+    # LABEL SIZE
+    # --------------------------------------------------------
+
+    padding_x = 7
 
     label_width = (
         text_width
         + (padding_x * 2)
     )
 
-    label_height = (
-        font_size
-        + (padding_y * 2)
-        + 2
-    )
+    label_height = 20
 
     # --------------------------------------------------------
-    # Top-right position
+    # TOP-RIGHT POSITION
     # --------------------------------------------------------
 
-    margin_right = 25
-    margin_top = 25
+    margin_right = 20
+    margin_top = 20
 
     x1 = (
-        page_width
+        page.rect.width
         - margin_right
-    )
-
-    y1 = (
-        page_height
-        - margin_top
     )
 
     x0 = (
@@ -187,9 +190,11 @@ def add_editable_text_comment(
         - label_width
     )
 
-    y0 = (
-        y1
-        - label_height
+    y0 = margin_top
+
+    y1 = (
+        y0
+        + label_height
     )
 
     rect = pymupdf.Rect(
@@ -200,51 +205,23 @@ def add_editable_text_comment(
     )
 
     # --------------------------------------------------------
-    # Rich text
-    #
-    # <b> makes the text bold.
-    # text-align:center centers it.
-    # --------------------------------------------------------
-
-    rich_text = (
-        '<div '
-        'style="'
-        'font-family:Helvetica;'
-        'font-size:11pt;'
-        'text-align:center;'
-        'margin:0;'
-        'padding:0;'
-        '">'
-        f'<b>{text}</b>'
-        '</div>'
-    )
-
-    # --------------------------------------------------------
-    # Create FreeText annotation
+    # CREATE PLAIN-TEXT FREETEXT ANNOTATION
     # --------------------------------------------------------
 
     annot = page.add_freetext_annot(
         rect,
-        rich_text,
+        text,
         fontsize=font_size,
-        fontname="helv",
+        fontname=font_name,
         text_color=(0, 0, 0),
         fill_color=(1, 1, 0),
         border_width=1,
         opacity=1,
-        align=pymupdf.TEXT_ALIGN_CENTER,
-        richtext=True,
-        style=(
-            "font-family:Helvetica;"
-            "font-size:11pt;"
-            "text-align:center;"
-            "margin:0;"
-            "padding:0;"
-        )
+        align=pymupdf.TEXT_ALIGN_CENTER
     )
 
     # --------------------------------------------------------
-    # Make sure appearance is updated
+    # UPDATE APPEARANCE
     # --------------------------------------------------------
 
     annot.update(
@@ -257,7 +234,7 @@ def add_editable_text_comment(
 
 
 # ============================================================
-# ADD SECTION
+# ADD PDF SECTION
 # ============================================================
 
 def add_pdf_section(
@@ -270,13 +247,13 @@ def add_pdf_section(
     Adds one PDF section to the output document.
 
     selected_pages=None
-        Complete PDF.
+        Adds the complete PDF.
 
     selected_pages=[...]
-        Only selected pages.
+        Adds only selected pages.
 
-    Adds editable text comment only to
-    the first page of the section.
+    The editable label is added only to the
+    first page of the section.
     """
 
     source_doc = pymupdf.open(
@@ -294,7 +271,7 @@ def add_pdf_section(
             )
 
         # ----------------------------------------------------
-        # Determine pages
+        # DETERMINE PAGES TO ADD
         # ----------------------------------------------------
 
         if selected_pages is None:
@@ -314,9 +291,7 @@ def add_pdf_section(
             )
 
         # ----------------------------------------------------
-        # Add pages one by one
-        #
-        # This preserves the exact requested order.
+        # INSERT PAGES
         # ----------------------------------------------------
 
         first_output_page = None
@@ -353,8 +328,7 @@ def add_pdf_section(
                 )
 
         # ----------------------------------------------------
-        # Add editable text comment to first
-        # page of this section only
+        # ADD LABEL TO FIRST PAGE ONLY
         # ----------------------------------------------------
 
         if first_output_page is not None:
@@ -415,7 +389,7 @@ def main():
 
         # ====================================================
         # STEP 2
-        # DATASHEET
+        # DATASHEET / PBLATT
         # ====================================================
 
         datasheet = select_pdf(
@@ -426,7 +400,7 @@ def main():
             return
 
         # ----------------------------------------------------
-        # Get Datasheet page count
+        # GET DATASHEET PAGE COUNT
         # ----------------------------------------------------
 
         datasheet_doc = pymupdf.open(
@@ -440,7 +414,7 @@ def main():
         datasheet_doc.close()
 
         # ----------------------------------------------------
-        # Ask Datasheet pages
+        # ASK REQUIRED DATASHEET PAGES
         # ----------------------------------------------------
 
         page_text = simpledialog.askstring(
@@ -463,6 +437,10 @@ def main():
 
         if page_text is None:
             return
+
+        # ----------------------------------------------------
+        # VALIDATE PAGE SELECTION
+        # ----------------------------------------------------
 
         try:
 
@@ -525,13 +503,19 @@ def main():
         if not output_name:
             output_name = "Query"
 
-        # Remove .pdf
+        # ----------------------------------------------------
+        # REMOVE .PDF IF USER ENTERED IT
+        # ----------------------------------------------------
+
         if output_name.lower().endswith(
             ".pdf"
         ):
             output_name = output_name[:-4]
 
-        # Remove invalid Windows characters
+        # ----------------------------------------------------
+        # REMOVE INVALID WINDOWS CHARACTERS
+        # ----------------------------------------------------
+
         output_name = re.sub(
             r'[<>:"/\\|?*]',
             "_",
@@ -659,7 +643,7 @@ def main():
             )
 
             # =================================================
-            # SAVE
+            # SAVE OUTPUT
             # =================================================
 
             output_doc.save(
@@ -673,7 +657,7 @@ def main():
             output_doc.close()
 
         # ====================================================
-        # SUCCESS
+        # SUCCESS MESSAGE
         # ====================================================
 
         messagebox.showinfo(
